@@ -2,8 +2,8 @@ package irm
 
 // Arch levels for IRM structures
 const (
-	ARCH_LVL0 = 0x00 // Architecture level 0
-	ARCH_LVL1 = 0x01 // Architecture level 1
+	IRM_ARCH_LVL0 = 0x00 // Architecture level 0
+	IRM_ARCH_LVL1 = 0x01 // Architecture level 1
 )
 
 // Values for F0

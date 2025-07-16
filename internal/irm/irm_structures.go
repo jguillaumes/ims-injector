@@ -1,23 +1,25 @@
 package irm
 
+import "fmt"
+
 // +
 // IRM_COMMON: 28 bytes + 4 bytes for the total length
 // The length field includes itself
 // -
 type IRM struct {
-	Llll         uint32
-	Irm_len      uint16
-	Irm_arch     uint8
-	Irm_f0       uint8
-	Irm_id       string
+	Llll            uint32
+	Irm_len         uint16
+	Irm_arch        uint8
+	Irm_f0          uint8
+	Irm_id          string
 	Irm_nak_rsncode uint16
-	irm_res1   uint16
-	Irm_f5       uint8
-	Irm_timer    uint8
-	Irm_soct     uint8
-	Irm_es       uint8
-	Irm_clientid string
-	Irm_user   IRM_USER
+	irm_res1        uint16
+	Irm_f5          uint8
+	Irm_timer       uint8
+	Irm_soct        uint8
+	Irm_es          uint8
+	Irm_clientid    string
+	Irm_user        IRM_USER
 }
 
 // +
@@ -41,26 +43,26 @@ type IRM_USER struct {
 }
 
 func NewIRM() *IRM {
-	return &IRM_COMMON{
-		Llll:         32 + 76	// Total length of the IRM_COMMON structure
-		Irm_len:      28 + 76,  // Length of the IRM structure
-		Irm_arch:     IRM_ARCH_LVL1, // Architecture level 1
-		Irm_id:       "*SAMPLE*"
+	return &IRM{
+		Llll:            32 + 76,       // Total length of the IRM_COMMON structure
+		Irm_len:         28 + 76,       // Length of the IRM structure
+		Irm_arch:        IRM_ARCH_LVL1, // Architecture level 1
+		Irm_id:          "*SAMPLE*",
 		Irm_nak_rsncode: 0,
-		irm_res1:     0,
-		Irm_f5:       0,
-		Irm_timer:    30,	// Default timer value = 30 seconds
-		Irm_soct:     SOCT_PERSISTENT, // Default socket type = Persistent
-		Irm_es:       0,		 // NO Unicode used
-		Irm_clientid: "        " // Let the EXIT assign the client ID
-		Irm_user:	 *NewIRM_USER(), // Initialize the user structure
+		irm_res1:        0,
+		Irm_f5:          0,
+		Irm_timer:       30,              // Default timer value = 30 seconds
+		Irm_soct:        SOCT_PERSISTENT, // Default socket type = Persistent
+		Irm_es:          0,               // NO Unicode used
+		Irm_clientid:    "        ",      // Let the EXIT assign the client ID
+		Irm_user:        *NewIRM_USER(),
 	}
 }
 
 func NewIRM_USER() *IRM_USER {
 	return &IRM_USER{
 		Irm_f1:           IRM_F1_TRNEXP,
-		Irm_f2:           IRM_F2_CM1 || IRM_F2_GENCLID,
+		Irm_f2:           IRM_F2_CM1 | IRM_F2_GENCLID,
 		Irm_f3:           IRM_F3_SYNCCONF,
 		Irm_f4:           IRM_F4_SENDREC,
 		Irm_trncod:       "        ",
@@ -80,7 +82,7 @@ func (u *IRM_USER) Serialize(buf []byte) error {
 	if len(buf) < 76 {
 		return fmt.Errorf("buffer too small for IRM_USER serialization")
 	}
-	
+
 	buf[0] = u.Irm_f1
 	buf[1] = u.Irm_f2
 	buf[2] = u.Irm_f3
@@ -117,7 +119,7 @@ func (irm *IRM) Serialize(buf []byte) error {
 	buf[7] = irm.Irm_f0
 
 	copy(buf[8:16], irm.Irm_id)
-	
+
 	buf[16] = byte(irm.Irm_nak_rsncode >> 8)
 	buf[17] = byte(irm.Irm_nak_rsncode)
 
