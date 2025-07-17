@@ -1,0 +1,31 @@
+{
+    // Utilitzeu IntelliSense per aprendre sobre els atributs possibles.
+    // Passeu el cursor per sobre per veure les descripcions dels atributs existents.
+    // Per a més informació, visiteu: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch file",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${file}"
+        },
+        {
+            "name": "Launch Package",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${fileDirname}",
+            "args": [
+                "-h", "192.168.36.33",
+                "-p", "4200",
+                "-d", "IMSFJ",
+                "-u","jguilla",
+                "-v",
+                "data/transactions.dat",
+                "data/output.dat",                
+            ]
+        }
+    ]
+}

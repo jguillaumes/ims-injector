@@ -1,6 +1,10 @@
 package irm
 
-import "fmt"
+import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
+)
 
 // +
 // IRM_COMMON: 28 bytes + 4 bytes for the total length
@@ -51,7 +55,7 @@ func NewIRM() *IRM {
 		Irm_nak_rsncode: 0,
 		irm_res1:        0,
 		Irm_f5:          0,
-		Irm_timer:       30,              // Default timer value = 30 seconds
+		Irm_timer:       10,              // Default timer value = 10 seconds
 		Irm_soct:        SOCT_PERSISTENT, // Default socket type = Persistent
 		Irm_es:          0,               // NO Unicode used
 		Irm_clientid:    "        ",      // Let the EXIT assign the client ID
@@ -63,7 +67,7 @@ func NewIRM_USER() *IRM_USER {
 	return &IRM_USER{
 		Irm_f1:           IRM_F1_TRNEXP,
 		Irm_f2:           IRM_F2_CM1 | IRM_F2_GENCLID,
-		Irm_f3:           IRM_F3_SYNCCONF,
+		Irm_f3:           IRM_F3_SYNCNONE,
 		Irm_f4:           IRM_F4_SENDREC,
 		Irm_trncod:       "        ",
 		Irm_imsdestid:    "        ",
@@ -78,60 +82,60 @@ func NewIRM_USER() *IRM_USER {
 }
 
 // Serialize IRM_USER into a provided byte slice, checking for sufficient length
-func (u *IRM_USER) Serialize(buf []byte) error {
-	if len(buf) < 76 {
-		return fmt.Errorf("buffer too small for IRM_USER serialization")
+func (u *IRM_USER) Serialize(buf *bytes.Buffer) error {
+	if buf.Available() < 76 {
+		return fmt.Errorf("buffer too small for IRM_USER serialization. %d bytes required, %d bytes provided", 76, buf.Available())
 	}
 
-	buf[0] = u.Irm_f1
-	buf[1] = u.Irm_f2
-	buf[2] = u.Irm_f3
-	buf[3] = u.Irm_f4
-	copy(buf[4:12], u.Irm_trncod)
-	copy(buf[12:20], u.Irm_imsdestid)
-	copy(buf[20:28], u.Irm_lterm)
-	copy(buf[28:36], u.Irm_racf_userid)
-	copy(buf[36:44], u.Irm_racf_grpname)
-	copy(buf[44:52], u.Irm_racf_pw)
-	copy(buf[52:60], u.Irm_appl_nm)
-	copy(buf[60:68], u.Irm_rerout_nm)
-	copy(buf[68:76], u.Irm_rt_altcid)
+	buf.WriteByte(u.Irm_f1)
+	buf.WriteByte(u.Irm_f2)
+	buf.WriteByte(u.Irm_f3)
+	buf.WriteByte(u.Irm_f4)
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_trncod))
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_imsdestid))
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_lterm))
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_racf_userid))
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_racf_grpname))
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_racf_pw))
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_appl_nm))
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_rerout_nm))
+	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_rt_altcid))
 
 	return nil
 }
 
-// Serialize IRM into a provided byte slice, checking for sufficient length
+// Serialize IRM into a provided byte buffer, checking for sufficient length
 // The numbers must be serialized in big-endian order
-func (irm *IRM) Serialize(buf []byte) error {
-	if len(buf) < 108 { // 32 + 76 = 108 bytes
-		return fmt.Errorf("buffer too small for IRM serialization")
+func (irm *IRM) Serialize(buf *bytes.Buffer) error {
+	if buf.Available() < 108 { // 32 + 76 = 108 bytes
+		return fmt.Errorf("buffer too small for IRM serialization. %d bytes required, %d bytes provided", 108, buf.Available())
 	}
 
-	buf[0] = byte(irm.Llll >> 24)
-	buf[1] = byte(irm.Llll >> 16)
-	buf[2] = byte(irm.Llll >> 8)
-	buf[3] = byte(irm.Llll)
+	// Set the length of the IRM structure
+	llll_be := make([]byte, 4)
+	binary.BigEndian.PutUint32(llll_be, irm.Llll)
+	buf.Write(llll_be)
 
-	buf[4] = byte(irm.Irm_len >> 8)
-	buf[5] = byte(irm.Irm_len)
+	ll_be := make([]byte, 2)
+	binary.BigEndian.PutUint16(ll_be, irm.Irm_len)
+	buf.Write(ll_be)
 
-	buf[6] = irm.Irm_arch
-	buf[7] = irm.Irm_f0
+	buf.WriteByte(irm.Irm_arch)
+	buf.WriteByte(irm.Irm_f0)
+	buf.WriteString(fmt.Sprintf("%-8s", irm.Irm_id))
 
-	copy(buf[8:16], irm.Irm_id)
+	buf.WriteByte(0) // nak_rsncode high byte
+	buf.WriteByte(0) // nak_rsncode low byte
 
-	buf[16] = byte(irm.Irm_nak_rsncode >> 8)
-	buf[17] = byte(irm.Irm_nak_rsncode)
+	buf.WriteByte(0) // irm_res1 high byte
+	buf.WriteByte(0) // irm_res1 low byte
 
-	buf[18] = byte(irm.irm_res1 >> 8)
-	buf[19] = byte(irm.irm_res1)
+	buf.WriteByte(irm.Irm_f5)
+	buf.WriteByte(irm.Irm_timer)
+	buf.WriteByte(irm.Irm_soct)
+	buf.WriteByte(irm.Irm_es)
 
-	buf[20] = irm.Irm_f5
-	buf[21] = irm.Irm_timer
-	buf[22] = irm.Irm_soct
-	buf[23] = irm.Irm_es
+	buf.WriteString(fmt.Sprintf("%-8s", irm.Irm_clientid))
 
-	copy(buf[24:32], irm.Irm_clientid)
-
-	return irm.Irm_user.Serialize(buf[32:108])
+	return irm.Irm_user.Serialize(buf)
 }
