@@ -33,10 +33,10 @@ func Do_interaction(host string, port uint16, irmTemplate irm.IRM, inc chan stri
 	for {
 		log.Trace("Looping the loop")
 		select {
-		case msg := <-inc:
-			if msg == "" {
-				// If an empty message is received, exit silently (and end the goroutine)
-				errc <- nil
+		case msg, ok := <-inc:
+			if !ok {
+				// Check for closed channel
+				errc <- nil // Signal end of goroutine
 				return
 			}
 
@@ -67,7 +67,7 @@ func Do_interaction(host string, port uint16, irmTemplate irm.IRM, inc chan stri
 			n, err := sess.conn.Write(sendBuffer[:len])
 			if err != nil {
 				errc <- fmt.Errorf("failed to send message to IMS: %v", err)
-				return
+				break // Unexpected condition, end process
 			}
 			log.Debugf("Wrote %d tx bytes.\n", n)
 
@@ -76,14 +76,14 @@ func Do_interaction(host string, port uint16, irmTemplate irm.IRM, inc chan stri
 			n, err = io.ReadAtLeast(sess.conn, respBuffer, 4)
 			if err != nil && err != io.EOF {
 				errc <- fmt.Errorf("failed to read response from IMS: %v", err)
-				return
+				break // Unexpected condition, end process
 			}
 			llll := binary.BigEndian.Uint32(respBuffer[:4])
 			if int(llll) > n {
-				n, err = io.ReadAtLeast(sess.conn, respBuffer[4:], int(llll)-n)
+				n, err = io.ReadAtLeast(sess.conn, respBuffer[n:], int(llll)-n)
 				if err != nil && err != io.EOF {
 					errc <- fmt.Errorf("failed to read response from IMS: %v", err)
-					return
+					break // Unexpected condition, end process
 				}
 			}
 			log.Debugf("Read %d tx response bytes.\n", n)
@@ -96,13 +96,12 @@ func Do_interaction(host string, port uint16, irmTemplate irm.IRM, inc chan stri
 				err = send_ack(sess, &irmTemplate, nowait_ack, sendBuffer, respBuffer)
 				if err != nil {
 					errc <- fmt.Errorf("failed to read response from IMS ACK: %v", err)
-					return
+					break // Unexpected condition, end process
 				}
 			}
 			if resperr != nil {
 				log.Warnf("Error received from IMS Connect: %v\n", resperr)
-				errc <- resperr
-				return
+				continue // Skip this transaction and continue
 			}
 
 			fullresp := strings.Join(response, "\n")
@@ -208,9 +207,6 @@ func analyzeResponse(buffer []byte) ([]string, bool, bool, error) {
 
 	remaining := int(binary.BigEndian.Uint32(bufReader.Next(4))) // Total message len (per HWSSMPL1)
 	remaining -= 4
-	if remaining < 0 {
-		log.Warnf("remaining bytes went negative (%d)", remaining)
-	}
 	for remaining > 0 {
 		if bufReader.Len() < 4 {
 			log.Errorf("inconsistency: not enough bytes to proceed in buffer. Bytes in buffer=%d, expected=%d", bufReader.Len(), remaining)
@@ -222,6 +218,9 @@ func analyzeResponse(buffer []byte) ([]string, bool, bool, error) {
 		segFlags := binary.BigEndian.Uint16(bufReader.Next(2)) // Segment flags
 		segData := bufReader.Next(int(seglen - 4))             // Rest of segment data
 		remaining -= int(seglen)
+		if remaining < 0 {
+			log.Warnf("remaining bytes went negative (%d)", remaining)
+		}
 
 		// Check for possible control data
 		if seglen >= 12 {
@@ -249,8 +248,22 @@ func analyzeResponse(buffer []byte) ([]string, bool, bool, error) {
 					}
 					rsm_retcode := binary.BigEndian.Uint32(segData[8:12])
 					rsm_rsncode := binary.BigEndian.Uint32(segData[12:16])
-					errmsg := IRM_messages[rsm_retcode]
-					err = fmt.Errorf("error returned by IMS Connect: %s - RC=%04X, RSN=%04X", errmsg, rsm_retcode, rsm_rsncode)
+					errmsg, ok := IRM_messages[rsm_retcode]
+					if !ok {
+						errmsg = "No text available"
+					}
+					var errrsn string
+					if rsm_rsncode == 0x0010 {
+						errrsn = fmt.Sprintf("OTMA reason code %04X", rsm_rsncode)
+					} else if rsm_rsncode == 0x0018 || rsm_rsncode == 0x001C {
+						errrsn = fmt.Sprintf("CSL reason code %04X", rsm_rsncode)
+					} else {
+						errrsn, ok = IRM_reasons[rsm_rsncode]
+						if !ok {
+							errrsn = "No text available"
+						}
+					}
+					err = fmt.Errorf("error returned by IMS Connect: %s: %s (RC=%04X, RSN=%04X)", errmsg, errrsn, rsm_retcode, rsm_rsncode)
 					continue
 				}
 

@@ -19,11 +19,9 @@
             "program": "${fileDirname}",
             "args": [
                 "-h", "sz22",
-                "-p", "4200",
-                "-d", "IMSEJ",
                 "-u","jguilla",
                 "-w","POLIKU",  
-                "-v","1",
+                "-d", "IMSEJDS",
                 "data/transactions.dat",
                 "data/output.dat",                
             ]
