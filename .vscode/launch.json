@@ -18,11 +18,12 @@
             "mode": "auto",
             "program": "${fileDirname}",
             "args": [
-                "-h", "192.168.36.33",
+                "-h", "sz22",
                 "-p", "4200",
-                "-d", "IMSFJ",
+                "-d", "IMSEJ",
                 "-u","jguilla",
-                "-v",
+                "-w","POLIKU",  
+                "-v","1",
                 "data/transactions.dat",
                 "data/output.dat",                
             ]

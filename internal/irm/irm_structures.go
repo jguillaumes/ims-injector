@@ -28,7 +28,7 @@ type IRM struct {
 
 // +
 // ARCH 0x01 user header.
-// 76 bytes of length
+// 68 bytes of length (rerout_nm and rt_altcid are overlaid)
 // -
 type IRM_USER struct {
 	Irm_f1           uint8
@@ -48,17 +48,18 @@ type IRM_USER struct {
 
 func NewIRM() *IRM {
 	return &IRM{
-		Llll:            32 + 76,       // Total length of the IRM_COMMON structure
-		Irm_len:         28 + 76,       // Length of the IRM structure
+		Llll:            4 + 28 + 68,   // Total length of the IRM_COMMON structure
+		Irm_len:         28 + 68,       // Length of the IRM structure
 		Irm_arch:        IRM_ARCH_LVL1, // Architecture level 1
-		Irm_id:          "*SAMPLE*",
+		Irm_f0:          0,
+		Irm_id:          "*SAMPL1*",
 		Irm_nak_rsncode: 0,
 		irm_res1:        0,
 		Irm_f5:          0,
-		Irm_timer:       10,              // Default timer value = 10 seconds
+		Irm_timer:       30,              // Default timer value = 10 seconds
 		Irm_soct:        SOCT_PERSISTENT, // Default socket type = Persistent
 		Irm_es:          0,               // NO Unicode used
-		Irm_clientid:    "        ",      // Let the EXIT assign the client ID
+		Irm_clientid:    "        ",
 		Irm_user:        *NewIRM_USER(),
 	}
 }
@@ -66,8 +67,8 @@ func NewIRM() *IRM {
 func NewIRM_USER() *IRM_USER {
 	return &IRM_USER{
 		Irm_f1:           IRM_F1_TRNEXP,
-		Irm_f2:           IRM_F2_CM1 | IRM_F2_GENCLID,
-		Irm_f3:           IRM_F3_SYNCNONE,
+		Irm_f2:           IRM_F2_CM0,
+		Irm_f3:           IRM_F3_SYNCCONF,
 		Irm_f4:           IRM_F4_SENDREC,
 		Irm_trncod:       "        ",
 		Irm_imsdestid:    "        ",
@@ -98,8 +99,11 @@ func (u *IRM_USER) Serialize(buf *bytes.Buffer) error {
 	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_racf_grpname))
 	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_racf_pw))
 	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_appl_nm))
-	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_rerout_nm))
-	buf.WriteString(fmt.Sprintf("%-8s", u.Irm_rt_altcid))
+	if u.Irm_rerout_nm != "        " {
+		buf.WriteString(fmt.Sprintf("%-8s", u.Irm_rerout_nm))
+	} else {
+		buf.WriteString(fmt.Sprintf("%-8s", u.Irm_rt_altcid))
+	}
 
 	return nil
 }

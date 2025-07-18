@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 
 	hd "github.com/jguillaumes/go-hexdump"
@@ -26,8 +27,8 @@ func Do_interaction(host string, port uint16, irmTemplate irm.IRM, inc chan stri
 	}
 	defer sess.Close()
 
-	sendBuffer := make([]byte, 0, 4*1024)  // Adjust buffer size as needed
-	respBuffer := make([]byte, 0, 16*1024) // Adjust buffer size as needed
+	sendBuffer := make([]byte, 0, 4*1024) // Adjust buffer size as needed
+	respBuffer := make([]byte, 256*1024)  // Adjust buffer size as needed
 
 	for {
 		log.Trace("Looping the loop")
@@ -57,33 +58,106 @@ func Do_interaction(host string, port uint16, irmTemplate irm.IRM, inc chan stri
 				return
 			}
 
-			if log.IsLevelEnabled(log.DebugLevel) {
+			if log.IsLevelEnabled(log.TraceLevel) {
 				d := hd.HexDump(sendBuffer[:len], "ISO8859-1")
 				log.Debugf("Prepared message for IMS:\n%s", d)
 			}
 
 			// Send the message to IMS
-			_, err = sess.conn.Write(sendBuffer[:len])
+			n, err := sess.conn.Write(sendBuffer[:len])
 			if err != nil {
 				errc <- fmt.Errorf("failed to send message to IMS: %v", err)
 				return
 			}
+			log.Debugf("Wrote %d tx bytes.\n", n)
 
 			// Read the response from IMS
 			log.Debug("Waiting for response from IMS")
-			n, err := sess.conn.Read(respBuffer)
-			if err != nil {
+			n, err = io.ReadAtLeast(sess.conn, respBuffer, 4)
+			if err != nil && err != io.EOF {
 				errc <- fmt.Errorf("failed to read response from IMS: %v", err)
 				return
 			}
-			log.Debugf("Received response from IMS: %s", respBuffer[:n])
+			llll := binary.BigEndian.Uint32(respBuffer[:4])
+			if int(llll) > n {
+				n, err = io.ReadAtLeast(sess.conn, respBuffer[4:], int(llll)-n)
+				if err != nil && err != io.EOF {
+					errc <- fmt.Errorf("failed to read response from IMS: %v", err)
+					return
+				}
+			}
+			log.Debugf("Read %d tx response bytes.\n", n)
 
-			outc <- string(respBuffer[:n]) // Convert response to string before sending
+			response, need_ack, nowait_ack, resperr := analyzeResponse(respBuffer)
+
+			if need_ack {
+				log.Debug("ACK was requested")
+				// Send ack
+				err = send_ack(sess, &irmTemplate, nowait_ack, sendBuffer, respBuffer)
+				if err != nil {
+					errc <- fmt.Errorf("failed to read response from IMS ACK: %v", err)
+					return
+				}
+			}
+			if resperr != nil {
+				log.Warnf("Error received from IMS Connect: %v\n", resperr)
+				errc <- resperr
+				return
+			}
+
+			fullresp := strings.Join(response, "\n")
+			log.Debugf("Response:\n%s\n", fullresp)
+			outc <- fullresp
 
 		case <-errc:
 			return // Exit on error signal
 		}
 	}
+}
+
+func send_ack(sess *IMSconSess, irmTemplate *irm.IRM, nowait bool, sendBuffer []byte, respBuffer []byte) error {
+	irm_ack := *irmTemplate
+	irm_ack.Llll += 4 // EOM
+	irm_ack.Irm_user.Irm_f4 = irm.IRM_F4_ACK
+	if nowait {
+		irm_ack.Irm_timer = 0xE9 // IRM no wait
+	} else {
+		irm_ack.Irm_timer = 0x1E
+	}
+	wbuff := bytes.NewBuffer(sendBuffer)
+	err := irm_ack.Serialize(wbuff)
+	if err != nil {
+		return err
+	}
+	// Add the EOM block
+	wbuff.WriteByte(0)
+	wbuff.WriteByte(0b00000100)
+	wbuff.WriteByte(0)
+	wbuff.WriteByte(0)
+
+	log.Debug("Sending ack to IMS: ")
+	n, err := sess.conn.Write(sendBuffer[:irm_ack.Llll])
+	if err != nil {
+		return err
+	}
+	log.Debugf("Wrote %d ack bytes.\n", n)
+	n, err = io.ReadAtLeast(sess.conn, respBuffer, 4)
+	if err != nil {
+		return err
+	}
+
+	if !nowait {
+		llll := binary.BigEndian.Uint32(respBuffer[:4])
+		if n < int(llll) {
+			_, err = io.ReadAtLeast(sess.conn, respBuffer[4:], int(llll)-n)
+		}
+		log.Debugf("Read %d ack response bytes.\n", n)
+		if log.IsLevelEnabled(log.TraceLevel) {
+			d := hd.HexDump(respBuffer[:llll], "ISO8859-1")
+			log.Tracef("Response to ACK:\n%s", d)
+		}
+	}
+	return err
 }
 
 func prepareMessage(irmTemplate irm.IRM, msg string, buf []byte) (int, error) {
@@ -97,14 +171,14 @@ func prepareMessage(irmTemplate irm.IRM, msg string, buf []byte) (int, error) {
 	// Make a copy of the IRM template to avoid modifying the original
 	irm := irmTemplate
 	// Set the length of the message in the IRM template
-	irm.Llll = irmTemplate.Llll + uint32(len(msg))
+	irm.Llll = irmTemplate.Llll + uint32(len(msg)+8)
 	// Serialize the IRM into the buffer
 	err := irm.Serialize(wbuff)
 	if err != nil {
 		return 0, fmt.Errorf("failed to serialize IRM: %v", err)
 	}
 	// Prepare the message length and zz bytes
-	msglen := len(msg)
+	msglen := len(msg) + 4
 	msglen_be := make([]byte, 2)
 	binary.BigEndian.PutUint16(msglen_be, uint16(msglen))
 	// Write the message length and zz bytes to the buffer
@@ -117,9 +191,99 @@ func prepareMessage(irmTemplate irm.IRM, msg string, buf []byte) (int, error) {
 
 	// Add the EOM block
 	wbuff.WriteByte(0)
-	wbuff.WriteByte(0b00001000)
+	wbuff.WriteByte(0b00000100)
 	wbuff.WriteByte(0)
 	wbuff.WriteByte(0)
 
-	return int(irmTemplate.Irm_len) + len(msg), nil
+	return wbuff.Len(), nil
+}
+
+func analyzeResponse(buffer []byte) ([]string, bool, bool, error) {
+	var ackRequired = false
+	var ackNowait = false
+	var err error = nil
+	var response = make([]string, 0, 100)
+
+	bufReader := bytes.NewBuffer(buffer)
+
+	remaining := int(binary.BigEndian.Uint32(bufReader.Next(4))) // Total message len (per HWSSMPL1)
+	remaining -= 4
+	if remaining < 0 {
+		log.Warnf("remaining bytes went negative (%d)", remaining)
+	}
+	for remaining > 0 {
+		if bufReader.Len() < 4 {
+			log.Errorf("inconsistency: not enough bytes to proceed in buffer. Bytes in buffer=%d, expected=%d", bufReader.Len(), remaining)
+			if bufReader.Available() > 0 {
+				log.Error(hd.HexDump(bufReader.AvailableBuffer(), "ISO8859-1"))
+			}
+		}
+		seglen := binary.BigEndian.Uint16(bufReader.Next(2))   // Segment length
+		segFlags := binary.BigEndian.Uint16(bufReader.Next(2)) // Segment flags
+		segData := bufReader.Next(int(seglen - 4))             // Rest of segment data
+		remaining -= int(seglen)
+
+		// Check for possible control data
+		if seglen >= 12 {
+			identifier_bytes := segData[:8]
+			identifier := string(identifier_bytes)
+			switch identifier {
+			case "*REQMOD*":
+				{
+					// MODNAME present in transaction response. Read it, log it and ignore
+					modName_bytes := segData[8:16]
+					modName := string(modName_bytes)
+					log.Infof("Modname present in response: %-8s", modName)
+					continue
+				}
+			case "*REQSTS*":
+				{
+					// Error/status response
+					if (segFlags & 0x2000) != 0 {
+						// ACK required
+						ackRequired = true
+					}
+					if segFlags&0x0002 != 0 {
+						// ACK Nowait supported
+						ackNowait = true
+					}
+					rsm_retcode := binary.BigEndian.Uint32(segData[8:12])
+					rsm_rsncode := binary.BigEndian.Uint32(segData[12:16])
+					errmsg := IRM_messages[rsm_retcode]
+					err = fmt.Errorf("error returned by IMS Connect: %s - RC=%04X, RSN=%04X", errmsg, rsm_retcode, rsm_rsncode)
+					continue
+				}
+
+			case "*CSMOKY*":
+				{
+					// End of message
+					if (segFlags & 0x2000) != 0 {
+						// ACK required
+						ackRequired = true
+					}
+					if segFlags&0x0002 != 0 {
+						// ACK Nowait supported
+						ackNowait = true
+					}
+					continue // End the loop
+				}
+			default:
+				// Actual transaction response data
+				response_line := string(segData)
+				response = append(response, response_line)
+				log.Tracef("Response line received: %s", response_line)
+				continue
+			}
+		} else {
+			// Actual transaction response data
+			response_line := string(segData)
+			response = append(response, response_line)
+			log.Tracef("Response line received: %s", response_line)
+			continue
+		}
+	}
+	if remaining != 0 {
+		log.Warnf("%d spurious characters detected!", remaining)
+	}
+	return response, ackRequired, ackNowait, err
 }

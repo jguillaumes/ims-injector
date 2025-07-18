@@ -3,7 +3,6 @@ package irm_net
 import (
 	"fmt"
 	"net"
-	"time"
 )
 
 type IMSconSess struct {
@@ -12,7 +11,11 @@ type IMSconSess struct {
 }
 
 func NewIMSconSess(hostname string, port uint16) (*IMSconSess, error) {
-	ip := net.ParseIP(hostname)
+	ips, err := net.LookupHost(hostname)
+	if err != nil {
+		return nil, err
+	}
+	ip := net.ParseIP(ips[0])
 	if ip == nil {
 		return nil, fmt.Errorf("invalid hostname: %s", hostname)
 	}
@@ -33,7 +36,6 @@ func (s *IMSconSess) Connect() error {
 		return fmt.Errorf("failed to connect to %s:%d: %v", s.tcpAddr.IP, s.tcpAddr.Port, err)
 	}
 	s.conn = conn
-	s.conn.SetDeadline(time.Now().Add(time.Second * 30))
 	return nil
 }
 
