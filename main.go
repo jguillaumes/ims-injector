@@ -10,6 +10,7 @@ import (
 
 	"github.com/jguillaumes/ims-injector/internal/irm"
 	"github.com/jguillaumes/ims-injector/internal/irm_net"
+	"github.com/schollz/progressbar/v3"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -54,6 +55,7 @@ func main() {
 		TimestampFormat:        "02-Jan-2006 03:04:05.000",
 	}
 	log.SetFormatter(&logf)
+	// log.SetReportCaller(true)
 	log.Info("Welcome to the IMS Injector!")
 
 	// Command line arguments parsing
@@ -223,6 +225,8 @@ func main() {
 
 	go func() {
 		// Process the responses from the interaction goroutine
+		bar := progressbar.Default(-1, "Processing IMS transactions") // Create a spinner
+		defer bar.Close()
 		for {
 			select {
 			case resp := <-outc:
@@ -230,6 +234,7 @@ func main() {
 					numOK++
 					// Write the response to the output file
 					_, err := outputFile.WriteString(fmt.Sprintf("<resp>\n%s\n</resp>\n", resp))
+					bar.Add(1)
 					if err != nil {
 						log.Errorf("Error writing response to output file: %v", err)
 						numKO++

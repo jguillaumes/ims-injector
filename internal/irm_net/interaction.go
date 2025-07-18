@@ -141,6 +141,7 @@ func send_ack(sess *IMSconSess, irmTemplate *irm.IRM, nowait bool, sendBuffer []
 	irm_ack.Irm_user.Irm_f4 = irm.IRM_F4_ACK
 	if nowait {
 		irm_ack.Irm_timer = 0xE9 // IRM no wait
+		irm_ack.Irm_user.Irm_f1 |= irm.IRM_F1_NOWAIT
 	} else {
 		irm_ack.Irm_timer = 0x1E // 0.5 seconds
 	}
@@ -161,12 +162,12 @@ func send_ack(sess *IMSconSess, irmTemplate *irm.IRM, nowait bool, sendBuffer []
 		return err
 	}
 	log.Debugf("Wrote %d ack bytes.\n", n)
-	n, err = io.ReadAtLeast(sess.conn, respBuffer, 4)
-	if err != nil {
-		return err
-	}
 
 	if !nowait {
+		n, err = io.ReadAtLeast(sess.conn, respBuffer, 4)
+		if err != nil {
+			return err
+		}
 		llll := binary.BigEndian.Uint32(respBuffer[:4])
 		if n < int(llll) {
 			_, err = io.ReadAtLeast(sess.conn, respBuffer[4:], int(llll)-n)
