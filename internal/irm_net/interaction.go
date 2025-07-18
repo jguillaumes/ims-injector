@@ -35,94 +35,92 @@ func Do_interaction(num int, host string, port uint16, irmTemplate irm.IRM, inc 
 	}
 	defer sess.Close()
 
+	log.Debugf("Concurrent interaction processor %d with clientid %s started.", num, clientId)
+
 	sendBuffer := make([]byte, 0, 4*1024) // Adjust buffer size as needed
 	respBuffer := make([]byte, 256*1024)  // Adjust buffer size as needed
 
 	for {
-		log.Trace("Looping the loop")
-		select {
-		case msg, ok := <-inc:
-			if !ok {
-				// Check for closed channel
-				errc <- nil // Signal end of goroutine
-				return
-			}
+		msg, ok := <-inc
+		if !ok {
+			// Check for closed channel
+			errc <- nil // Signal end of goroutine
+			break
+		}
 
-			parts := strings.Split(msg, " ")
-			trancode := parts[0]
-			if len(trancode) > 8 {
-				errc <- fmt.Errorf("transaction code %s is too long", trancode)
-				continue
-			}
-			// Pad trancode to 8 bytes with spaces
-			trancode = fmt.Sprintf("%-8s", trancode)
+		parts := strings.Split(msg, " ")
+		trancode := parts[0]
+		if len(trancode) > 8 {
+			errc <- fmt.Errorf("transaction code %s is too long", trancode)
+			continue
+		}
+		// Pad trancode to 8 bytes with spaces
+		trancode = fmt.Sprintf("%-8s", trancode)
 
-			// Make a local copy of irmTemplate
-			irm := irmTemplate
-			irm.Irm_clientid = clientId
-			irm.Irm_user.Irm_trncod = trancode
+		// Make a local copy of irmTemplate
+		irm := irmTemplate
+		irm.Irm_clientid = clientId
+		irm.Irm_user.Irm_trncod = trancode
 
-			log.Debug("Sending message to IMS: ", msg)
-			len, err := prepareMessage(&irm, msg, sendBuffer) // prepareMessage is a function that prepares the message for sending
-			if err != nil {
-				errc <- fmt.Errorf("failed to prepare message: %v", err)
-				return
-			}
+		log.Debug("Sending message to IMS: ", msg)
+		len, err := prepareMessage(&irm, msg, sendBuffer) // prepareMessage is a function that prepares the message for sending
+		if err != nil {
+			errc <- fmt.Errorf("failed to prepare message: %v", err)
+			break
+		}
 
-			if log.IsLevelEnabled(log.TraceLevel) {
-				d := hd.HexDump(sendBuffer[:len], "ISO8859-1")
-				log.Debugf("Prepared message for IMS:\n%s", d)
-			}
+		if log.IsLevelEnabled(log.TraceLevel) {
+			d := hd.HexDump(sendBuffer[:len], "ISO8859-1")
+			log.Debugf("Prepared message for IMS:\n%s", d)
+		}
 
-			// Send the message to IMS
-			n, err := sess.conn.Write(sendBuffer[:len])
-			if err != nil {
-				errc <- fmt.Errorf("failed to send message to IMS: %v", err)
-				break // Unexpected condition, end process
-			}
-			log.Debugf("Wrote %d tx bytes.\n", n)
+		// Send the message to IMS
+		n, err := sess.conn.Write(sendBuffer[:len])
+		if err != nil {
+			errc <- fmt.Errorf("failed to send message to IMS: %v", err)
+			break // Unexpected condition, end process
+		}
+		log.Debugf("Wrote %d tx bytes.\n", n)
 
-			// Read the response from IMS
-			log.Debug("Waiting for response from IMS")
-			n, err = io.ReadAtLeast(sess.conn, respBuffer, 4)
+		// Read the response from IMS
+		log.Debug("Waiting for response from IMS")
+		n, err = io.ReadAtLeast(sess.conn, respBuffer, 4)
+		if err != nil && err != io.EOF {
+			errc <- fmt.Errorf("failed to read response from IMS: %v", err)
+			break // Unexpected condition, end process
+		}
+		llll := binary.BigEndian.Uint32(respBuffer[:4])
+		if int(llll) > n {
+			n, err = io.ReadAtLeast(sess.conn, respBuffer[n:], int(llll)-n)
 			if err != nil && err != io.EOF {
 				errc <- fmt.Errorf("failed to read response from IMS: %v", err)
 				break // Unexpected condition, end process
 			}
-			llll := binary.BigEndian.Uint32(respBuffer[:4])
-			if int(llll) > n {
-				n, err = io.ReadAtLeast(sess.conn, respBuffer[n:], int(llll)-n)
-				if err != nil && err != io.EOF {
-					errc <- fmt.Errorf("failed to read response from IMS: %v", err)
-					break // Unexpected condition, end process
-				}
-			}
-			log.Debugf("Read %d tx response bytes.\n", n)
-
-			response, need_ack, nowait_ack, resperr := analyzeResponse(respBuffer)
-
-			if need_ack {
-				log.Debug("ACK was requested")
-				// Send ack
-				err = send_ack(sess, &irmTemplate, nowait_ack, sendBuffer, respBuffer)
-				if err != nil {
-					errc <- fmt.Errorf("failed to read response from IMS ACK: %v", err)
-					break // Unexpected condition, end process
-				}
-			}
-			if resperr != nil {
-				log.Warnf("Error received from IMS Connect: %v\n", resperr)
-				continue // Skip this transaction and continue
-			}
-
-			fullresp := strings.Join(response, "\n")
-			log.Debugf("Response:\n%s\n", fullresp)
-			outc <- fullresp
-
-		case <-errc:
-			return // Exit on error signal
 		}
+		log.Debugf("Read %d tx response bytes.\n", n)
+
+		response, need_ack, nowait_ack, resperr := analyzeResponse(respBuffer)
+
+		if need_ack {
+			log.Debug("ACK was requested")
+			// Send ack
+			err = send_ack(sess, &irmTemplate, nowait_ack, sendBuffer, respBuffer)
+			if err != nil {
+				errc <- fmt.Errorf("failed to read response from IMS ACK: %v", err)
+				break // Unexpected condition, end process
+			}
+		}
+		if resperr != nil {
+			log.Warnf("Error received from IMS Connect: %v\n", resperr)
+			continue // Skip this transaction and continue
+		}
+
+		fullresp := strings.Join(response, "\n")
+		log.Tracef("Response:\n%s\n", fullresp)
+		outc <- fullresp
+
 	}
+	log.Debugf("Concurrent interaction processor %d ended.", num)
 }
 
 func send_ack(sess *IMSconSess, irmTemplate *irm.IRM, nowait bool, sendBuffer []byte, respBuffer []byte) error {
@@ -262,11 +260,12 @@ func analyzeResponse(buffer []byte) ([]string, bool, bool, error) {
 						errmsg = "No text available"
 					}
 					var errrsn string
-					if rsm_rsncode == 0x0010 {
+					switch rsm_rsncode {
+					case 0x0010:
 						errrsn = fmt.Sprintf("OTMA reason code %04X", rsm_rsncode)
-					} else if rsm_rsncode == 0x0018 || rsm_rsncode == 0x001C {
+					case 0x0018, 0x001C:
 						errrsn = fmt.Sprintf("CSL reason code %04X", rsm_rsncode)
-					} else {
+					default:
 						errrsn, ok = IRM_reasons[rsm_rsncode]
 						if !ok {
 							errrsn = "No text available"
