@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/jguillaumes/ims-injector/internal/irm"
 	"github.com/jguillaumes/ims-injector/internal/irm_net"
@@ -116,12 +117,23 @@ func main() {
 		parseError = true
 	}
 
-	/*
-		if *concurrent > 1 {
-			log.Warnf("Conncurrency is not yet supported. The %d valus is ignofred", *concurrent)
-			_ = *concurrent
+	if *concurrent > 99 {
+		log.Fatal("Concurrent transactions must be less or equal to 99")
+		parseError = true
+	}
+
+	if strings.TrimSpace(*clientID) != "" && *concurrent > 1 {
+		trClientId := strings.TrimSpace(*clientID)
+		var maxlen int
+		if *concurrent <= 10 {
+			maxlen = 7
+		} else {
+			maxlen = 6
 		}
-	*/
+		if len(trClientId) > maxlen {
+			log.Fatalf("The client id length must not exceed %d due to concurrency of %d", maxlen, *concurrent)
+		}
+	}
 
 	if parseError {
 		flag.Usage()
@@ -167,8 +179,8 @@ func main() {
 	errc := make(chan error)      // Channel for errors & control
 
 	// Start the interaction goroutines
-	for range *concurrent {
-		go irm_net.Do_interaction(*host, uint16(*port), *irm_template, inc, outc, errc)
+	for n := range *concurrent {
+		go irm_net.Do_interaction(n, *host, uint16(*port), *irm_template, inc, outc, errc)
 	}
 
 	// Read messages from the input file and send them to the interaction goroutine

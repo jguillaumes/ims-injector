@@ -12,7 +12,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func Do_interaction(host string, port uint16, irmTemplate irm.IRM, inc chan string, outc chan string, errc chan error) {
+func Do_interaction(num int, host string, port uint16, irmTemplate irm.IRM, inc chan string, outc chan string, errc chan error) {
+
+	var clientId string
+	if num > 0 {
+		baseClientId := strings.TrimSpace(irmTemplate.Irm_clientid)
+		clientId = fmt.Sprintf("%s%d", baseClientId, num)
+	} else {
+		clientId = irmTemplate.Irm_clientid
+	}
 
 	sess, err := NewIMSconSess(host, port)
 	if err != nil {
@@ -49,10 +57,13 @@ func Do_interaction(host string, port uint16, irmTemplate irm.IRM, inc chan stri
 			// Pad trancode to 8 bytes with spaces
 			trancode = fmt.Sprintf("%-8s", trancode)
 
-			irmTemplate.Irm_user.Irm_trncod = trancode
+			// Make a local copy of irmTemplate
+			irm := irmTemplate
+			irm.Irm_clientid = clientId
+			irm.Irm_user.Irm_trncod = trancode
 
 			log.Debug("Sending message to IMS: ", msg)
-			len, err := prepareMessage(irmTemplate, msg, sendBuffer) // prepareMessage is a function that prepares the message for sending
+			len, err := prepareMessage(&irm, msg, sendBuffer) // prepareMessage is a function that prepares the message for sending
 			if err != nil {
 				errc <- fmt.Errorf("failed to prepare message: %v", err)
 				return
@@ -159,18 +170,16 @@ func send_ack(sess *IMSconSess, irmTemplate *irm.IRM, nowait bool, sendBuffer []
 	return err
 }
 
-func prepareMessage(irmTemplate irm.IRM, msg string, buf []byte) (int, error) {
+func prepareMessage(irm *irm.IRM, msg string, buf []byte) (int, error) {
 	// Total length = Message length + IRM length + 4 bytes for the message llzz + 4 bytes for EOM
-	if len(msg)+int(irmTemplate.Llll+8) > cap(buf) {
-		return 0, fmt.Errorf("message too long for buffer. %d bytes required, %d bytes available", len(msg)+int(irmTemplate.Llll), cap(buf))
+	if len(msg)+int(irm.Llll+8) > cap(buf) {
+		return 0, fmt.Errorf("message too long for buffer. %d bytes required, %d bytes available", len(msg)+int(irm.Llll), cap(buf))
 	}
 
 	wbuff := bytes.NewBuffer(buf)
 
-	// Make a copy of the IRM template to avoid modifying the original
-	irm := irmTemplate
 	// Set the length of the message in the IRM template
-	irm.Llll = irmTemplate.Llll + uint32(len(msg)+8)
+	irm.Llll = irm.Llll + uint32(len(msg)+8)
 	// Serialize the IRM into the buffer
 	err := irm.Serialize(wbuff)
 	if err != nil {
