@@ -12,6 +12,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Do_interaction interacts with IMS connect to send transactions and receive results.
+//
+// This function is intended to be run as a goroutine. It will read the transactions from the
+// inc channel and write the responses to the outc channel. In case of error, it will be reported using
+// the errc channel.
+// num is a number representing the goroutine, and it is used to build an unique clientId if necessary.
+// irmTemplate contains the common information used to interact with IMS Connect. host and port are
+// self explanatory.
 func Do_interaction(num int, host string, port uint16, irmTemplate irm.IRM, inc chan string, outc chan string, errc chan error) {
 
 	var clientId string
@@ -123,6 +131,10 @@ func Do_interaction(num int, host string, port uint16, irmTemplate irm.IRM, inc 
 	log.Debugf("Concurrent interaction processor %d ended.", num)
 }
 
+// send_ack prepares and sends an ACK message to IMS Connect
+// If the nowait flag is specified it will use the IRM_NO_WAIT value for the IRM timeout
+// and will *not* wait for a response. Otherwise, it will perform a read after sending
+// the ACK.
 func send_ack(sess *IMSconSess, irmTemplate *irm.IRM, nowait bool, sendBuffer []byte, respBuffer []byte) error {
 	irm_ack := *irmTemplate
 	irm_ack.Llll += 4 // EOM
@@ -130,7 +142,7 @@ func send_ack(sess *IMSconSess, irmTemplate *irm.IRM, nowait bool, sendBuffer []
 	if nowait {
 		irm_ack.Irm_timer = 0xE9 // IRM no wait
 	} else {
-		irm_ack.Irm_timer = 0x1E
+		irm_ack.Irm_timer = 0x1E // 0.5 seconds
 	}
 	wbuff := bytes.NewBuffer(sendBuffer)
 	err := irm_ack.Serialize(wbuff)
@@ -168,6 +180,10 @@ func send_ack(sess *IMSconSess, irmTemplate *irm.IRM, nowait bool, sendBuffer []
 	return err
 }
 
+// prepareMessage prepares a message to be sent to IMS Connect.
+// The message is built serializing the irm block and adding the segment corresponding
+// to the transaction text specified by msg. The message to be sent is
+// built in the buf byte slice.
 func prepareMessage(irm *irm.IRM, msg string, buf []byte) (int, error) {
 	// Total length = Message length + IRM length + 4 bytes for the message llzz + 4 bytes for EOM
 	if len(msg)+int(irm.Llll+8) > cap(buf) {
@@ -204,6 +220,12 @@ func prepareMessage(irm *irm.IRM, msg string, buf []byte) (int, error) {
 	return wbuff.Len(), nil
 }
 
+// analyzeResponse parses an IMS Connect response buffer
+// If the buffer corresponds to a transaction response, it builds a slice of strings,
+// one element for response segment. Notice the results are undefined if the response
+// contains non-text elements.
+// It also checks the different status blocks to determine if an ACK is required, and
+// if the NOWAIT function is available.
 func analyzeResponse(buffer []byte) ([]string, bool, bool, error) {
 	var ackRequired = false
 	var ackNowait = false

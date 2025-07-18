@@ -270,14 +270,12 @@ func main() {
 	os.Exit(returnCode)
 }
 
-/*
-convert_timeout: Convert a timeout value in seconds to the corresponding OTMA value
-
-See table 58 in the IMS Communications and Connections
-(The table 58 is for the IMS14 version)
-
-The default value for 0 is 0.5 seconds
-*/
+// convert_timeout converts a timeout value in seconds to the corresponding OTMA value
+//
+// See table 58 in the IMS Communications and Connections
+// (The table 58 is for the IMS14 version)
+//
+// The default value for 0 is 0.5 seconds
 func convert_timeout(timeout int) byte {
 	if timeout == 0 {
 		return 0x1E // Default  = 0.5 seconds
