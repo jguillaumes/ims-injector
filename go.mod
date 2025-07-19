@@ -1,6 +1,6 @@
 module github.com/jguillaumes/ims-injector
 
-go 1.24.1
+go 1.23.1
 
 require (
 	github.com/jguillaumes/go-hexdump v1.1.3
