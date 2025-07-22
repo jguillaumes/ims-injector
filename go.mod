@@ -2,6 +2,8 @@ module github.com/jguillaumes/ims-injector
 
 go 1.23.1
 
+toolchain go1.24.5
+
 require (
 	github.com/jguillaumes/go-hexdump v1.1.3
 	github.com/schollz/progressbar/v3 v3.18.0
